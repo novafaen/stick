@@ -1,3 +1,6 @@
 venv/
 .idea/
 configuration.json
+*egg-info
+__pycache__
+dist/
