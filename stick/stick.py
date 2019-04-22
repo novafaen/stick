@@ -1,48 +1,86 @@
+"""Stick is a service built on SMRT framework.
+
+Stick can communicate with local Tellstick for on-off devices.
+
+Current supported on-off devices:
+- Nexa switch.
+"""
+
 import logging
 
-from smrt import SMRTApp, app, make_response, request, jsonify, smrt
+from smrt import SMRTApp, app, make_response, jsonify, smrt
 
 from stick.tellstick import Tellstick
 
+log = logging.getLogger('stick')
+
 
 class Stick(SMRTApp):
+    """Stick is a ``SMRTApp`` that is to be registered with SMRT."""
 
     def __init__(self):
-
-        logging.debug('%s spinning up...', self.client_name())
+        """Create and initiate ````Stick`` application."""
+        log.debug('%s spinning up...', self.application_name())
 
         SMRTApp.__init__(self)
 
         self._client = Tellstick(self.config['tellstick_api']['username'], self.config['tellstick_api']['password'])
 
-        logging.debug('%s initiated!', self.client_name())
+        log.debug('%s initiated!', self.application_name())
 
     def status(self):
+        """See ``SMRTApp`` documentation for ``status`` implementation."""
         return {
-            'name': self.client_name(),
+            'name': self.application_name(),
             'status': 'OK',
             'version': '0.0.1'
         }
 
     @staticmethod
-    def client_name():
+    def application_name():
+        """See ``SMRTApp`` documentation for ``application_name`` implementation."""
         return 'Stick'
 
-    def get_device(self, name):
-        return self._client.get_device(name)
-
     def get_devices(self):
+        """Get all devices that can be discovered.
+
+        Function will perform a discovery for devices, and return the
+        devices in an array. Devices are cached, so if a device "dissapears", it
+        will still be returned once discovered.
+
+        :returns: [``Device``].
+        """
         return self._client.get_devices()
+
+    def get_device(self, name):
+        """Get a device identified by name.
+
+        Function will do discovery, see ``get_devices`` documentation.
+
+        :param name: ``String`` unique identifier.
+        :returns: ``Device`` or ``None``
+        """
+        devices = self.get_devices()  # do nothing with response
+
+        for device in devices:
+            if device.get_name() == name:
+                return device
+
+        return None  # not found
 
 
 # create prism and register it with smrt
 stick = Stick()
-app.register_client(stick)
+app.register_application(stick)
 
 
 @smrt('/devices',
       produces='application/se.novafaen.stick.devices.v1+json')
 def get_devices():
+    """Endpoint to get all discoverable, and cached, devices.
+
+    :returns: ``se.novafaen.stick.devices.v1+json``
+    """
     sticks = stick.get_devices()
 
     response = {
@@ -57,12 +95,16 @@ def get_devices():
 @smrt('/device/<string:name>',
       produces='application/se.novafaen.stick.device.v1+json')
 def get_device(name):
+    """Endpoint to get a single device by name.
+
+    :returns: ``se.novafaen.stick.device.v1+json``
+    """
     device = stick.get_device(name)
 
     if device is None:
         body = {
             'status': 'NotFound',
-            'message': 'Could not find light \'%s\'' % name
+            'message': 'Could not find device \'%s\'' % name
         }
         response = make_response(jsonify(body), 404)
         response.headers['Content-Type'] = 'application/se.novafaen.smrt.error.v1+json'
@@ -82,6 +124,10 @@ def get_device(name):
       methods=['PUT'],
       produces='application/se.novafaen.stick.device.v1+json')
 def power_on(name):
+    """Endpoint to turn on device, identified by name.
+
+    :returns: ``application/se.novafaen.stick.device.v1+json``
+    """
     return _power(name, True)
 
 
@@ -89,6 +135,10 @@ def power_on(name):
       methods=['PUT'],
       produces='application/se.novafaen.stick.device.v1+json')
 def power_off(name):
+    """Endpoint to turn off device, identified by name.
+
+    :returns: ``application/se.novafaen.stick.device.v1+json``
+    """
     return _power(name, False)
 
 
@@ -104,7 +154,7 @@ def _power(name, on_off):
         response.headers['Content-Type'] = 'application/se.novafaen.smrt.error.v1+json'
         return response
 
-    logging.debug('[stick] setting device "%s" power to %s', name, on_off)
+    log.debug('[stick] setting device "%s" power to %s', name, on_off)
 
     device.set_power(on_off)
 
