@@ -1,4 +1,5 @@
-#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""``Stick`` setup tools file."""
 
 from setuptools import setup
 
@@ -10,12 +11,12 @@ setup(
     author_email='smrt@novafaen.se',
     url='http://smrt.novafaen.se/',
     packages=['stick'],
-    requires=[
+    install_requires=[
         'smrt',
         'requests'
     ],
     dependency_links=[
-        'git+https://github.com/novafaen/smrt.git'
+        'git+https://github.com/novafaen/smrt.git#egg=smrt'
     ],
     test_suite='tests'
 )

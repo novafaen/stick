@@ -6,25 +6,28 @@ Current supported on-off devices:
 - Nexa switch.
 """
 
-import logging
-
-from smrt import SMRTApp, app, make_response, jsonify, smrt
+import logging as loggr
+import os
 
 from stick.tellstick import Tellstick
 
-log = logging.getLogger('stick')
+from smrt import SMRTApp, app, make_response, jsonify, smrt
+
+log = loggr.getLogger('stick')
 
 
 class Stick(SMRTApp):
     """Stick is a ``SMRTApp`` that is to be registered with SMRT."""
 
     def __init__(self):
-        """Create and initiate ````Stick`` application."""
-        log.debug('%s spinning up...', self.application_name())
+        """Create and initiate ``Stick`` application."""
+        log.debug('%s (%s) spinning up...', self.application_name(), self.version())
 
-        SMRTApp.__init__(self)
+        self._schemas_path = os.path.join(os.path.dirname(__file__), 'schemas')
 
-        self._client = Tellstick(self.config['tellstick_api']['username'], self.config['tellstick_api']['password'])
+        SMRTApp.__init__(self, self._schemas_path, 'configuration.stick.schema.json')
+
+        self._client = Tellstick(self._config['tellstick_api']['username'], self._config['tellstick_api']['password'])
 
         log.debug('%s initiated!', self.application_name())
 
@@ -33,8 +36,16 @@ class Stick(SMRTApp):
         return {
             'name': self.application_name(),
             'status': 'OK',
-            'version': '0.0.1'
+            'version': self.version()
         }
+
+    @staticmethod
+    def version():
+        """Get version of application.
+
+        :returns: `String` version name
+        """
+        return '0.0.1'
 
     @staticmethod
     def application_name():
