@@ -8,8 +8,6 @@ import requests
 
 from stick.onoffdevice import OnOffDevice
 
-_cache = {}
-
 log = logging.getLogger('stick')
 
 # disable third party logging
@@ -34,6 +32,7 @@ class Tellstick:
         """
         self._username = username
         self._password = password
+        self._devices = {}
 
         self._discover_tellstick()
         if self._ts_address is not None:
@@ -154,29 +153,31 @@ class Tellstick:
         :returns: ``[OnOffDevice]``
         """
         if not self._try_dicovered_and_authorized():
-            log.debug('Cannot return any devices, stick is not authenticated and autorized against tellstick')
-            return []  # not authorized, return empty list
+            log.warning('Cannot return any devices, stick is not authenticated and autorized against tellstick')
+            return self._devices.values()  # return cached values
 
         response = requests.get('http://%s/api/devices/list' % self._ts_address,
                                 headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
         if response.status_code != 200:
-            return []
+            return self._devices.values()  # return cached values
 
         try:
             raw_devices = response.json()
         except ValueError as err:
             log.warning('Failed to parse response from tellstick: %s', err)
-            return []
+            return self._devices.values()  # return cached values
 
         log.debug('discovered %i devices', len(raw_devices['device']))
 
         for raw_device in raw_devices['device']:
             name = raw_device['name']
-            if name not in _cache:
-                _cache[name] = OnOffDevice(name, raw_device, self)
+            if name not in self._devices:
+                self._devices[name] = OnOffDevice(name, raw_device, self)
 
-        return list(_cache.values())
+        log.debug(self._devices)
+
+        return list(self._devices.values())
 
     def get_device(self, name):
         """Get ``OnOffDevice`` by name.
@@ -184,13 +185,13 @@ class Tellstick:
         :param name: ``String`` identifier.
         :returns: ``OnOffDevice`` or ``None``
         """
-        if name not in _cache:
-            self.get_devices()  # do nothing with response
+        if name not in self._devices:
+            self.get_devices()  # re-discover
 
-        if name in _cache:
-            return _cache[name]
-        else:
-            return None
+        if name in self._devices:
+            return self._devices[name]
+
+        return None
 
     def power(self, id, on_off):
         """Set power for device with Id.
@@ -198,12 +199,10 @@ class Tellstick:
         :param id: ``String`` telldus device id
         :param on_off: ``Boolean`` power state
         """
-        power_action = 'turnOff'
-        if on_off:
-            power_action = 'turnOn'
+        power_action = 'turnOn' if on_off else 'turnOff'
 
         response = requests.get('http://%s/api/device/%s' % (self._ts_address, power_action),
                                 params={'id': id},
                                 headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
-        log.debug(response.text)
+        return response.status_code == 200 and response.json()['status'] == 'success'

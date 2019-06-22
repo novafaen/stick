@@ -12,6 +12,7 @@ import os
 from stick.tellstick import Tellstick
 
 from smrt import SMRTApp, app, make_response, jsonify, smrt
+from smrt import ResouceNotFound
 
 log = loggr.getLogger('stick')
 
@@ -23,8 +24,9 @@ class Stick(SMRTApp):
         """Create and initiate ``Stick`` application."""
         log.debug('%s (%s) spinning up...', self.application_name(), self.version())
 
-        self._schemas_path = os.path.join(os.path.dirname(__file__), 'schemas')
+        self._devices = {}  # no identified devices at startup
 
+        self._schemas_path = os.path.join(os.path.dirname(__file__), 'schemas')
         SMRTApp.__init__(self, self._schemas_path, 'configuration.stick.schema.json')
 
         self._client = Tellstick(self._config['tellstick_api']['username'], self._config['tellstick_api']['password'])
@@ -40,17 +42,14 @@ class Stick(SMRTApp):
         }
 
     @staticmethod
-    def version():
-        """Get version of application.
-
-        :returns: `String` version name
-        """
-        return '0.0.1'
-
-    @staticmethod
     def application_name():
         """See ``SMRTApp`` documentation for ``application_name`` implementation."""
         return 'Stick'
+
+    @staticmethod
+    def version():
+        """See ``SMRTApp`` documentation for ``version`` implementation."""
+        return '0.0.1'
 
     def get_devices(self):
         """Get all devices that can be discovered.
@@ -71,13 +70,7 @@ class Stick(SMRTApp):
         :param name: ``String`` unique identifier.
         :returns: ``Device`` or ``None``
         """
-        devices = self.get_devices()  # do nothing with response
-
-        for device in devices:
-            if device.get_name() == name:
-                return device
-
-        return None  # not found
+        return self._client.get_device(name)
 
 
 # create prism and register it with smrt
@@ -94,11 +87,11 @@ def get_devices():
     """
     sticks = stick.get_devices()
 
-    response = {
-        'devices': [{'name': s.get_name(), 'protocol': s.protocol()} for s in sticks]
+    body = {
+        'devices': [stick.json() for stick in sticks]
     }
 
-    response = make_response(jsonify(response), 200)
+    response = make_response(jsonify(body), 200)
     response.headers['Content-Type'] = 'application/se.novafaen.stick.devices.v1+json'
     return response
 
@@ -113,18 +106,9 @@ def get_device(name):
     device = stick.get_device(name)
 
     if device is None:
-        body = {
-            'status': 'NotFound',
-            'message': 'Could not find device \'%s\'' % name
-        }
-        response = make_response(jsonify(body), 404)
-        response.headers['Content-Type'] = 'application/se.novafaen.smrt.error.v1+json'
-        return response
+        raise ResouceNotFound('Could not find device \'{}\''.format(name))
 
-    body = {
-        'name': device.get_name(),
-        'protocol': device.protocol()
-    }
+    body = device.json()
 
     response = make_response(jsonify(body), 200)
     response.headers['Content-Type'] = 'application/se.novafaen.prism.light.v1+json'
@@ -153,17 +137,35 @@ def power_off(name):
     return _power(name, False)
 
 
+@smrt('/device/<string:name>/power/toggle',
+      methods=['PUT'],
+      produces='application/se.novafaen.stick.device.v1+json')
+def power_toggle(name):
+    """Endpoint to turn toggle device power, identified by name.
+
+    :returns: ``application/se.novafaen.stick.device.v1+json``
+    """
+    return _toggle(name)
+
+
+def _toggle(name):
+    device = stick.get_device(name)
+
+    if device is None:
+        raise ResouceNotFound('Could not find device \'%s\'' % name)
+
+    device.toggle_power()
+
+    response = make_response(jsonify(device.json()), 200)
+    response.headers['Content-Type'] = 'application/se.novafaen.stick.device.v1+json'
+    return response
+
+
 def _power(name, on_off):
     device = stick.get_device(name)
 
     if device is None:
-        body = {
-            'status': 'NotFound',
-            'message': 'Could not find device \'%s\'' % name
-        }
-        response = make_response(jsonify(body), 404)
-        response.headers['Content-Type'] = 'application/se.novafaen.smrt.error.v1+json'
-        return response
+        raise ResouceNotFound('Could not find device \'%s\'' % name)
 
     log.debug('[stick] setting device "%s" power to %s', name, on_off)
 
