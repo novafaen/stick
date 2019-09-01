@@ -1,8 +1,8 @@
 """Tellstick local API client."""
 
-import socket
-
+from threading import Timer
 import logging
+import socket
 
 import requests
 
@@ -15,9 +15,32 @@ logging.getLogger('requests').setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
+def discover_tellstick():
+    """Perform local discovery for Telldus devices."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+    sock.settimeout(10)  # allow 10 seconds for discovery
+    sock.sendto(b'D', ('255.255.255.255', 30303))
+
+    data, (address, port) = sock.recvfrom(1024)  # handle no answer?
+
+    split_data = data.split(b':')
+    ts_type = split_data[0].decode('utf-8')
+    ts_version = split_data[3].decode('utf-8')
+
+    log.debug('discovered Tellstick "%s" (%s) at %s:%s', ts_type, ts_version, address, port)
+
+    return address
+
+
 class Tellstick:
     """Tellstick Local API implementation."""
 
+    _username = None
+    _password = None
+    _devices = {}
     _ts_address = None
     _ts_type = None
     _ts_version = None
@@ -32,30 +55,20 @@ class Tellstick:
         """
         self._username = username
         self._password = password
-        self._devices = {}
 
-        self._discover_tellstick()
-        if self._ts_address is not None:
-            self._authorize()  # only authorize if tellstick was discovered
+        self._try_dicovered_and_authorized()
 
-    def _discover_tellstick(self):
-        """Perform local discovery for Telldus devices."""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._refresh_token()
 
-        sock.settimeout(10)  # allow 10 seconds for discovery
-        sock.sendto(b'D', ('255.255.255.255', 30303))
+    def _try_dicovered_and_authorized(self):
+        """Try to discover and authorize."""
+        if self._ts_address is None:
+            self._ts_address = discover_tellstick()
 
-        data, (address, port) = sock.recvfrom(1024)  # handle no answer?
+        if self._ts_address is not None and self._ts_bearer is None:
+            self._authorize()
 
-        self._ts_address = address
-
-        split_data = data.split(b':')
-        self._ts_type = split_data[0].decode('utf-8')
-        self._ts_version = split_data[3].decode('utf-8')
-
-        log.debug('discovered Tellstick "%s" (%s) at %s:%s', self._ts_type, self._ts_version, address, port)
+        return self._ts_address is not None and self._ts_bearer is not None
 
     def _authorize(self):
         """Authorize stick against telldus live api to get token."""
@@ -123,9 +136,13 @@ class Tellstick:
                                params={'token': token})
 
         log.debug('get token bearer token, successful=%s', response.status_code == 200)
+        log.debug('renewal allowed of token=%s', response.json()['allowRenew'])
 
         if response.status_code != 200:
             raise RuntimeError('Failed to get bearer token, got code=%s', response.status_code)
+
+        # assume that renewal is allowed, todo: implement if not
+        log.debug('will schedule renewal')
 
         try:
             json_token = response.json()
@@ -137,15 +154,21 @@ class Tellstick:
 
         log.debug('stick successfully authenticated and authorized: %s', self._ts_bearer is not None)
 
-    def _try_dicovered_and_authorized(self):
-        """Try to discover and authorize."""
-        if self._ts_address is None:
-            self._discover_tellstick()
+    def _refresh_token(self):
+        response = requests.get('http://%s/api/refreshToken' % self._ts_address,
+                                headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
-        if self._ts_bearer is None:
-            self._authorize()
+        call_successful = response.status_code == 200
 
-        return self._ts_address is not None and self._ts_bearer is not None
+        if call_successful:
+            self._ts_bearer = response.json()['token']
+            self._ts_bearer_expiry = response.json()['expires']
+
+        refresh_interval = 60 * 60 * 1  # every 1 hours
+
+        log.debug('refreshed bearer token, successful=%s, next refresh in %s seconds', call_successful, refresh_interval)
+
+        Timer(refresh_interval, self._refresh_token).start()
 
     def get_devices(self):
         """Get list of ``OnOffDevice`` connected to tellstick.
@@ -160,6 +183,7 @@ class Tellstick:
                                 headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
         if response.status_code != 200:
+            log.debug('failed to get devices, returning cached device list')
             return self._devices.values()  # return cached values
 
         try:
@@ -174,8 +198,6 @@ class Tellstick:
             name = raw_device['name']
             if name not in self._devices:
                 self._devices[name] = OnOffDevice(name, raw_device, self)
-
-        log.debug(self._devices)
 
         return list(self._devices.values())
 
@@ -199,10 +221,20 @@ class Tellstick:
         :param id: ``String`` telldus device id
         :param on_off: ``Boolean`` power state
         """
+        if not self._try_dicovered_and_authorized():
+            return False
+
         power_action = 'turnOn' if on_off else 'turnOff'
 
         response = requests.get('http://%s/api/device/%s' % (self._ts_address, power_action),
                                 params={'id': id},
                                 headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
-        return response.status_code == 200 and response.json()['status'] == 'success'
+        call_successful = response.status_code == 200
+        if not call_successful:
+            log.debug('call state was not successful (%s), will force token refresh', response.status_code)
+            self._bearer = None
+            self._refresh_token()
+
+        log.debug('tellstick action %s, code=%s, status=%s', id, response.status_code, response.json()['status'])
+        return call_successful and response.json()['status'] == 'success'
