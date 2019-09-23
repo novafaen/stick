@@ -8,7 +8,7 @@ import requests
 
 from stick.onoffdevice import OnOffDevice
 
-log = logging.getLogger('stick')
+log = logging.getLogger('smrt')
 
 # disable third party logging
 logging.getLogger('requests').setLevel(logging.WARNING)

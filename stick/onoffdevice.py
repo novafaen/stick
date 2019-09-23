@@ -3,7 +3,7 @@
 import logging as loggr
 import time
 
-log = loggr.getLogger('stick')
+log = loggr.getLogger('smrt')
 
 
 class OnOffDevice:

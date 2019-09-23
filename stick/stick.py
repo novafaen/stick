@@ -14,7 +14,7 @@ from stick.tellstick import Tellstick
 from smrt import SMRTApp, app, make_response, jsonify, smrt
 from smrt import ResouceNotFound
 
-log = loggr.getLogger('stick')
+log = loggr.getLogger('smrt')
 
 
 class Stick(SMRTApp):
