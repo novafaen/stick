@@ -1,18 +1,14 @@
 """Tellstick local API client."""
 
 from threading import Timer
-import logging
+import logging as loggr
 import socket
 
 import requests
 
 from stick.onoffdevice import OnOffDevice
 
-log = logging.getLogger('smrt')
-
-# disable third party logging
-logging.getLogger('requests').setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+log = loggr.getLogger('smrt')
 
 
 def discover_tellstick():
