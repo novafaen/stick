@@ -42,6 +42,7 @@ class Tellstick:
     _ts_version = None
     _ts_bearer = None
     _ts_bearer_expiry = None
+    _renewal_allowed = False
 
     def __init__(self, username, password):
         """Create and initialize Tellstick.
@@ -70,11 +71,11 @@ class Tellstick:
         """Authorize stick against telldus live api to get token."""
         session = requests.Session()  # keep session between calls
 
+        log.debug('starting tellstick login procedure')
+
         # step 1: create token request
         response = session.put('http://%s/api/token' % self._ts_address,
                                data={'app': 'smrtstick'})
-
-        log.debug('put token request, successful=%s', response.status_code == 200)
 
         if response.status_code != 200:
             raise RuntimeError('Failed to get token page, got code=%s', response.status_code)
@@ -90,10 +91,9 @@ class Tellstick:
         # step 2: get authorization/login page from telldus live
         response = session.get(auth_url)
 
-        log.debug('get authorization request, successful=%s', response.status_code == 200)
-
         if response.status_code != 200:
-            raise RuntimeError('Failed to get authorization page, got code=%s', response.status_code)
+            log.error(f'failed to get authorization page, code={response.status_code}, body={response.text}')
+            raise RuntimeError('Failed to get authorization page')
 
         login_url = response.url  # redirected here, get the new url
 
@@ -101,10 +101,9 @@ class Tellstick:
         response = session.post(login_url,
                                 data={'email': self._username, 'password': self._password})
 
-        log.debug('telldus live login, successful=%s', response.status_code == 200)
-
         if response.status_code != 200:
-            raise RuntimeError('Failed to login to telldus live, got code=%s', response.status_code)
+            log.error(f'failed to login to telldus live, code={response.status_code}, body={response.text}')
+            raise RuntimeError('Failed to login to telldus live')
 
         trust_url = response.url
 
@@ -112,45 +111,46 @@ class Tellstick:
         response = session.post(trust_url,
                                 data={'trust': 'yes'})
 
-        log.debug('trust application request, successful=%s', response.status_code == 200)
-
         if response.status_code != 200:
-            raise RuntimeError('Failed to trust stick as application, got code=%s', response.status_code)
+            log.error(f'failed to trust application, code={response.status_code}, body={response.text}')
+            raise RuntimeError('Failed to trust stick as application')
 
         # step 5: autorize application
         response = session.post('http://%s/api/authorize' % self._ts_address,
                                 params={'token': token},
                                 data={'ttl': 525600, 'extend': 1})
 
-        log.debug('authorize application, successful=%s', response.status_code == 200)
-
         if response.status_code != 200:
-            raise RuntimeError('Failed to authorize application, got code=%s', response.status_code)
+            log.error(f'failed to authorize, code={response.status_code}, body={response.text}')
+            raise RuntimeError('Failed to authorize application')
 
         # step 6: final step, get the bearer token
         response = session.get('http://%s/api/token' % self._ts_address,
                                params={'token': token})
 
-        log.debug('get token bearer token, successful=%s', response.status_code == 200)
-        log.debug('renewal allowed of token=%s', response.json()['allowRenew'])
-
         if response.status_code != 200:
-            raise RuntimeError('Failed to get bearer token, got code=%s', response.status_code)
-
-        # assume that renewal is allowed, todo: implement if not
-        log.debug('will schedule renewal')
+            log.error(f'failed to get token, code={response.status_code}, body={response.text}')
+            raise RuntimeError('Failed to get token')
 
         try:
             json_token = response.json()
         except ValueError as err:
             log.warning('could not parse response from telldus device: %s', err)
+            raise RuntimeError('cannot parse telldus response json')
 
         self._ts_bearer = json_token['token']
         self._ts_bearer_expiry = json_token['expires']
 
         log.debug('stick successfully authenticated and authorized: %s', self._ts_bearer is not None)
 
+        self._renewal_allowed = response.json()['allowRenew']
+        log.debug('renewal allowed of token=%s', self._renewal_allowed)
+
     def _refresh_token(self):
+        if not self._renewal_allowed:
+            log.debug('no renewal will be performed, not permitted')
+            return
+
         response = requests.get('http://%s/api/refreshToken' % self._ts_address,
                                 headers={'Authorization': 'Bearer %s' % self._ts_bearer})
 
