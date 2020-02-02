@@ -28,6 +28,8 @@ class Stick(SMRTApp):
 
         self._schemas_path = os.path.join(os.path.dirname(__file__), 'schemas')
         SMRTApp.__init__(self, self._schemas_path, 'configuration.stick.schema.json')
+        if not hasattr(self, '_config') or self._config is None:
+            raise RuntimeError('cannot start without valid configuration file.')
 
         self._client = Tellstick(self._config['tellstick_api']['username'], self._config['tellstick_api']['password'])
 
